@@ -84,8 +84,7 @@ headers: {
 }
 }
 );
-      }
-
+}
       const reply = data.candidates?.[0]?.content?.parts
         ?.map(part => part.text || "")
         .join("") || "No response generated.";
