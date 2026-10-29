@@ -68,10 +68,22 @@ export default {
       const data = await aiResponse.json();
 
       if (!aiResponse.ok) {
-        return new Response(
-          JSON.stringify({ error: "The AI provider returned an error." }),
-          { status: 502, headers }
-        );
+const errorDetails = await aiResponse.text();
+
+return new Response(
+JSON.stringify({
+error: “Gemini API request failed.”,
+status: aiResponse.status,
+details: errorDetails.slice(0, 1000)
+}),
+{
+status: 502,
+headers: {
+…headers,
+“Content-Type”: “application/json”
+}
+}
+);
       }
 
       const reply = data.candidates?.[0]?.content?.parts
