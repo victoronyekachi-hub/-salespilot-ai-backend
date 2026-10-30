@@ -58,22 +58,43 @@ async function findBusinesses(industry, location, limit) {
 out center tags ${Math.min(limit * 5, 250)};
 `;
 
-  const overpassResponse = await fetch(
-    "https://overpass-api.de/api/interpreter",
-    {
+  const servers = [
+  "https://overpass.private.coffee/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass-api.de/api/interpreter"
+];
+
+let data = null;
+let lastError = "";
+
+for (const server of servers) {
+  try {
+    const response = await fetch(server, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded"
       },
       body: "data=" + encodeURIComponent(query)
+    });
+
+    if (response.ok) {
+      data = await response.json();
+      break;
     }
-  );
 
-  if (!overpassResponse.ok) {
-    throw new Error("Business search is busy. Please try again later.");
+    lastError = "Server returned HTTP " + response.status;
+
+  } catch (error) {
+    lastError = error.message;
   }
+}
 
-  const data = await overpassResponse.json();
+if (!data) {
+  throw new Error(
+    "All free business search servers are temporarily unavailable. " +
+    lastError
+  );
+}
 
   const keyword = industry.toLowerCase();
 
