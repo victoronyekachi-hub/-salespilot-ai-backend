@@ -1,53 +1,65 @@
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type"
+};
+
+function jsonResponse(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/json"
+    }
+  });
+}
+
 export default {
   async fetch(request, env) {
-    const headers = {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Content-Type": "application/json"
-    };
-
-    if (request.method === "OPTIONS") {
-      return new Response(null, { headers });
-    }
-
-    if (request.method === "GET") {
-      return new Response(
-        JSON.stringify({ message: "SalesPilot AI backend is running." }),
-        { headers }
-      );
-    }
-
-    if (request.method !== "POST") {
-      return new Response(
-        JSON.stringify({ error: "Use POST to send a message." }),
-        { status: 405, headers }
-      );
-    }
-
     try {
-      const body = await request.json();
-      const message = body.message;
-
-      if (typeof message !== "string" || !message.trim()) {
-        return new Response(
-          JSON.stringify({ error: "Please enter a message." }),
-          { status: 400, headers }
-        );
+      // Handle browser CORS requests
+      if (request.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: corsHeaders
+        });
       }
 
+      // Test backend connection
+      if (request.method === "GET") {
+        return jsonResponse({
+          message: "SalesPilot AI backend is running."
+        });
+      }
+
+      // Allow POST requests only
+      if (request.method !== "POST") {
+        return jsonResponse({
+          error: "Method not allowed."
+        }, 405);
+      }
+
+      // Check API key
       if (!env.GEMINI_API_KEY) {
-        return new Response(
-          JSON.stringify({ error: "The AI service is not configured." }),
-          { status: 500, headers }
-        );
+        return jsonResponse({
+          error: "Gemini API key is missing from Worker environment."
+        }, 500);
       }
-if (!env.GEMINI_API_KEY) {
-  return new Response(
-    JSON.stringify({ error: "Gemini API key is missing from Worker environment." }),
-    { status: 500, headers }
-  );
-}
+
+      // Read incoming message
+      const body = await request.json();
+
+      const message = typeof body.message === "string"
+        ? body.message.trim()
+        : "";
+
+      if (!message) {
+        return jsonResponse({
+          error: "Please enter a message."
+        }, 400);
+      }
+
+      // Send request to Gemini
       const aiResponse = await fetch(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
         {
@@ -59,73 +71,48 @@ if (!env.GEMINI_API_KEY) {
           body: JSON.stringify({
             systemInstruction: {
               parts: [{
-                text: "You are SalesPilot AI, a sales assistant for small web design agencies. Help users qualify leads, write personalized outreach, and plan follow-ups. Never invent facts about prospects."
+                text: "You are SalesPilot AI, a sales assistant for small web design agencies. Help users qualify leads, research prospects, write personalized outreach messages, and plan follow-ups. Never invent facts about prospects. Be professional, helpful, and concise."
               }]
             },
             contents: [{
               role: "user",
-              parts: [{ text: message.trim().slice(0, 5000) }]
+              parts: [{
+                text: message.slice(0, 5000)
+              }]
             }]
           })
         }
       );
 
+      // Read Gemini response only once
       const responseText = await aiResponse.text();
 
-if (!aiResponse.ok) {
-  return new Response(
-    JSON.stringify({
-      error: "Gemini API request failed.",
-      status: aiResponse.status,
-      details: responseText.slice(0, 1000)
-    }),
-    {
-      status: 502,
-      headers: {
-        ...headers,
-        "Content-Type": "application/json"
+      // Handle Gemini errors
+      if (!aiResponse.ok) {
+        return jsonResponse({
+          error: "Gemini API request failed.",
+          status: aiResponse.status,
+          details: responseText.slice(0, 1000)
+        }, 502);
       }
-    }
-  );
-}
 
-const data = JSON.parse(responseText);
+      // Convert response to JSON
+      const data = JSON.parse(responseText);
 
-return new Response(
-JSON.stringify({
-error: "Gemini API request failed.",
-status: aiResponse.status,
-details: errorDetails.slice(0, 1000)
-}),
-{
-status: 502,
-headers: {
-...headers,
-"Content-Type": "application/json"
-}
-}
-);
-}
+      // Extract AI response
       const reply = data.candidates?.[0]?.content?.parts
         ?.map(part => part.text || "")
         .join("") || "No response generated.";
 
-            return new Response(JSON.stringify({ reply }), { headers });
+      return jsonResponse({
+        reply: reply
+      });
 
     } catch (error) {
-      return new Response(
-        JSON.stringify({
-          error: "Worker execution failed.",
-          details: String(error)
-        }),
-        {
-          status: 500,
-          headers: {
-            ...headers,
-            "Content-Type": "application/json"
-          }
-        }
-      );
+      return jsonResponse({
+        error: "Worker execution failed.",
+        details: String(error)
+      }, 500);
     }
   }
 };
