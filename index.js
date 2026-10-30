@@ -77,7 +77,7 @@ const errorDetails = await aiResponse.text();
 
 return new Response(
 JSON.stringify({
-error: “Gemini API request failed.”,
+error: "Gemini API request failed.",
 status: aiResponse.status,
 details: errorDetails.slice(0, 1000)
 }),
