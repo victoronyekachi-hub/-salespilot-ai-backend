@@ -14,10 +14,33 @@ function jsonResponse(data, status = 200) {
   });
 }
 
+async function callGemini(model, message, apiKey) {
+  return fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey
+      },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{
+            text: "You are SalesPilot AI, a professional sales assistant for small web design agencies. Help users qualify leads, research prospects, write personalized outreach messages, and plan follow-ups. Never invent facts about prospects."
+          }]
+        },
+        contents: [{
+          role: "user",
+          parts: [{ text: message }]
+        }]
+      })
+    }
+  );
+}
+
 export default {
   async fetch(request, env) {
     try {
-      // Handle browser CORS requests
       if (request.method === "OPTIONS") {
         return new Response(null, {
           status: 204,
@@ -25,30 +48,25 @@ export default {
         });
       }
 
-      // Test backend connection
       if (request.method === "GET") {
         return jsonResponse({
           message: "SalesPilot AI backend is running."
         });
       }
 
-      // Allow POST requests only
       if (request.method !== "POST") {
         return jsonResponse({
           error: "Method not allowed."
         }, 405);
       }
 
-      // Check API key
       if (!env.GEMINI_API_KEY) {
         return jsonResponse({
-          error: "Gemini API key is missing from Worker environment."
+          error: "Gemini API key is missing."
         }, 500);
       }
 
-      // Read incoming message
       const body = await request.json();
-
       const message = typeof body.message === "string"
         ? body.message.trim()
         : "";
@@ -59,53 +77,44 @@ export default {
         }, 400);
       }
 
-      // Send request to Gemini
-      const aiResponse = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": env.GEMINI_API_KEY
-          },
-          body: JSON.stringify({
-            systemInstruction: {
-              parts: [{
-                text: "You are SalesPilot AI, a sales assistant for small web design agencies. Help users qualify leads, research prospects, write personalized outreach messages, and plan follow-ups. Never invent facts about prospects. Be professional, helpful, and concise."
-              }]
-            },
-            contents: [{
-              role: "user",
-              parts: [{
-                text: message.slice(0, 5000)
-              }]
-            }]
-          })
-        }
+      let aiResponse = await callGemini(
+        "gemini-3.8-flash",
+        message.slice(0, 5000),
+        env.GEMINI_API_KEY
       );
 
-      // Read Gemini response only once
+      let selectedModel = "gemini-3.8-flash";
+
+      if ([429, 500, 502, 503, 504].includes(aiResponse.status)) {
+        aiResponse = await callGemini(
+          "gemini-3.5-flash-lite",
+          message.slice(0, 5000),
+          env.GEMINI_API_KEY
+        );
+
+        selectedModel = "gemini-3.5-flash-lite";
+      }
+
       const responseText = await aiResponse.text();
 
-      // Handle Gemini errors
       if (!aiResponse.ok) {
         return jsonResponse({
-          error: "Gemini API request failed.",
+          error: "Both AI attempts were unsuccessful or the backup failed.",
           status: aiResponse.status,
+          model: selectedModel,
           details: responseText.slice(0, 1000)
         }, 502);
       }
 
-      // Convert response to JSON
       const data = JSON.parse(responseText);
 
-      // Extract AI response
       const reply = data.candidates?.[0]?.content?.parts
         ?.map(part => part.text || "")
         .join("") || "No response generated.";
 
       return jsonResponse({
-        reply: reply
+        reply,
+        model: selectedModel
       });
 
     } catch (error) {
