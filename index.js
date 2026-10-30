@@ -94,21 +94,22 @@ headers: {
         ?.map(part => part.text || "")
         .join("") || "No response generated.";
 
-      return new Response(JSON.stringify({ reply }), { headers });
+            return new Response(JSON.stringify({ reply }), { headers });
 
     } catch (error) {
-  return new Response(
-    JSON.stringify({
-      error: "Worker execution failed.",
-      details: String(error)
-    }),
-    {
-      status: 500,
-      headers: {
-        ...headers,
-        "Content-Type": "application/json"
-            }
+      return new Response(
+        JSON.stringify({
+          error: "Worker execution failed.",
+          details: String(error)
+        }),
+        {
+          status: 500,
+          headers: {
+            ...headers,
+            "Content-Type": "application/json"
+          }
+        }
+      );
     }
-  );
-}
+  }
 };
