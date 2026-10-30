@@ -70,10 +70,26 @@ if (!env.GEMINI_API_KEY) {
         }
       );
 
-      const data = await aiResponse.json();
+      const responseText = await aiResponse.text();
 
-      if (!aiResponse.ok) {
-const errorDetails = await aiResponse.text();
+if (!aiResponse.ok) {
+  return new Response(
+    JSON.stringify({
+      error: "Gemini API request failed.",
+      status: aiResponse.status,
+      details: responseText.slice(0, 1000)
+    }),
+    {
+      status: 502,
+      headers: {
+        ...headers,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+}
+
+const data = JSON.parse(responseText);
 
 return new Response(
 JSON.stringify({
