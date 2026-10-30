@@ -85,7 +85,7 @@ details: errorDetails.slice(0, 1000)
 status: 502,
 headers: {
 ...headers,
-“Content-Type”: “application/json”
+"Content-Type": "application/json"
 }
 }
 );
