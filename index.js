@@ -42,7 +42,12 @@ export default {
           { status: 500, headers }
         );
       }
-
+if (!env.GEMINI_API_KEY) {
+  return new Response(
+    JSON.stringify({ error: "Gemini API key is missing from Worker environment." }),
+    { status: 500, headers }
+  );
+}
       const aiResponse = await fetch(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
         {
