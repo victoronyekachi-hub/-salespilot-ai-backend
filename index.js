@@ -278,6 +278,142 @@ export default {
     }
 
     // GROQ CONFIGURATION
+// AI WEBSITE OPPORTUNITY ANALYZER
+if (body.action === "analyzeWebsite") {
+
+  const website = String(body.url || "").trim();
+  const businessName = String(body.businessName || "").trim();
+
+  if (!website) {
+    return json({ error: "Website URL is required." }, 400);
+  }
+
+  let siteURL;
+
+  try {
+    siteURL = new URL(website);
+
+    if (
+      siteURL.protocol !== "https:" ||
+      !siteURL.hostname.includes(".") ||
+      siteURL.username ||
+      siteURL.password ||
+      siteURL.hostname === "localhost" ||
+      siteURL.hostname.endsWith(".local") ||
+      siteURL.hostname.endsWith(".internal") ||
+      /^\d{1,3}(\.\d{1,3}){3}$/.test(siteURL.hostname) ||
+      siteURL.hostname.includes(":")
+    ) {
+      throw new Error("Invalid public website URL.");
+    }
+
+  } catch {
+    return json({
+      error: "Please provide a valid public HTTPS website URL."
+    }, 400);
+  }
+
+  try {
+
+    const response = await fetchWithTimeout(
+      siteURL.href,
+      {
+        method: "GET",
+        redirect: "manual",
+        headers: {
+          "User-Agent": "SalesPilotAI/1.0",
+          "Accept": "text/html"
+        }
+      },
+      12000
+    );
+
+    if (!response.ok) {
+      return json({
+        error: "Website could not be accessed. HTTP status: " + response.status
+      }, 502);
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+
+    if (!contentType.includes("text/html")) {
+      return json({
+        error: "This URL did not return an HTML webpage."
+      }, 400);
+    }
+
+    const html = (await response.text()).slice(0, 150000);
+
+    const title =
+      (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || "";
+
+    const description =
+      (html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)/i) || [])[1] || "";
+
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/\s+/g, " ")
+      .slice(0, 10000);
+
+    const prompt = `
+You are SalesPilot AI Website Opportunity Analyst.
+
+Business: ${businessName || "Unknown"}
+Website: ${siteURL.href}
+
+WEBSITE TITLE:
+${title}
+
+META DESCRIPTION:
+${description}
+
+VISIBLE PAGE CONTENT:
+${text}
+
+Analyse the available website information.
+
+Return:
+1. Overall website impression.
+2. Possible design and usability weaknesses.
+3. Missing or unclear business features.
+4. Opportunities for improvement.
+5. A personalized website redesign sales pitch.
+6. An opportunity rating: High, Medium or Low.
+
+Only report issues supported by the supplied page information.
+Do not claim to have tested loading speed, mobile responsiveness,
+security, accessibility or other technical metrics.
+If information is insufficient, say so.
+
+Make the recommendations practical and concise.
+`;
+
+    const analysis = await askGroq(
+      prompt,
+      env.GROQ_API_KEY
+    );
+
+    return json({
+      success: true,
+      website: siteURL.href,
+      title: title,
+      description: description,
+      analysis: analysis
+    });
+
+  } catch (error) {
+
+    return json({
+      error: error.message || "Website analysis failed."
+    }, 502);
+
+  }
+}
 if (!env.GROQ_API_KEY) {
   return json({
     error: "Groq API key is missing. Add GROQ_API_KEY to Cloudflare Worker secrets."
