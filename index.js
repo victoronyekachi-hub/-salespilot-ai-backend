@@ -15,184 +15,244 @@ function json(data, status = 200) {
   });
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// BUSINESS FINDER
 async function findBusinesses(industry, location, limit) {
-  // Find the location using OpenStreetMap
   const geoURL =
     "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=" +
     encodeURIComponent(location);
 
-  const geoResponse = await fetch(geoURL, {
+  const geoResponse = await fetchWithTimeout(geoURL, {
     headers: {
       "User-Agent": "SalesPilotAI/1.0"
     }
-  });
+  }, 15000);
 
   if (!geoResponse.ok) {
     throw new Error("Location search is temporarily unavailable.");
   }
 
-  const places = await geoResponse.json();
+  const geoData = await geoResponse.json();
 
-  if (!places.length) {
-    throw new Error("Location not found. Try a larger city.");
+  if (!geoData.length) {
+    throw new Error("Location not found. Try another location.");
   }
 
-  const place = places[0];
-  const box = place.boundingbox;
+  const place = geoData[0];
 
-  const south = Number(box[0]);
-  const north = Number(box[1]);
-  const west = Number(box[2]);
-  const east = Number(box[3]);
+  const south = Number(place.boundingbox[0]);
+  const north = Number(place.boundingbox[1]);
+  const west = Number(place.boundingbox[2]);
+  const east = Number(place.boundingbox[3]);
 
-  // Search OpenStreetMap for named businesses
   const query = `
-[out:json][timeout:25];
+[out:json][timeout:20];
 (
   nwr["name"]["shop"](${south},${west},${north},${east});
   nwr["name"]["office"](${south},${west},${north},${east});
   nwr["name"]["craft"](${south},${west},${north},${east});
-  nwr["name"]["amenity"~"^(restaurant|cafe|fast_food|clinic|dentist|bank|pharmacy)$"](${south},${west},${north},${east});
-  nwr["name"]["tourism"~"^(hotel|guest_house|attraction)$"](${south},${west},${north},${east});
+  nwr["name"]["amenity"~"restaurant|cafe|fast_food|clinic|dentist|bank|pharmacy"](${south},${west},${north},${east});
+  nwr["name"]["tourism"~"hotel|guest_house|attraction"](${south},${west},${north},${east});
 );
-out center tags ${Math.min(limit * 5, 250)};
+out center tags ${Math.min(limit * 8, 300)};
 `;
 
   const servers = [
-  "https://overpass.private.coffee/api/interpreter",
-  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-  "https://overpass-api.de/api/interpreter"
-];
+    "https://overpass.private.coffee/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass-api.de/api/interpreter"
+  ];
 
-let data = null;
-let lastError = "";
+  let elements = null;
 
-for (const server of servers) {
-  try {
-    const response = await fetch(server, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: "data=" + encodeURIComponent(query)
+  for (const server of servers) {
+    try {
+      const response = await fetchWithTimeout(server, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+        },
+        body: "data=" + encodeURIComponent(query)
+      }, 30000);
+
+      if (!response.ok) continue;
+
+      const data = await response.json();
+      elements = data.elements || [];
+      break;
+
+    } catch (error) {
+      continue;
+    }
+  }
+
+  if (!elements) {
+    throw new Error("Business search servers are busy. Try again shortly.");
+  }
+
+  const results = [];
+  const seen = new Set();
+
+  for (const item of elements) {
+    const tags = item.tags || {};
+
+    if (!tags.name) continue;
+
+    const category =
+      tags.shop ||
+      tags.office ||
+      tags.craft ||
+      tags.amenity ||
+      tags.tourism ||
+      "business";
+
+    const lat = item.lat ?? item.center?.lat;
+    const lon = item.lon ?? item.center?.lon;
+
+    const key = tags.name.toLowerCase() + "|" + lat + "|" + lon;
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const address = [
+      tags["addr:housenumber"],
+      tags["addr:street"],
+      tags["addr:city"] || tags["addr:town"] || tags["addr:village"]
+    ].filter(Boolean).join(" ");
+
+    results.push({
+      name: tags.name,
+      address: address || place.display_name || location,
+      website: tags.website || tags["contact:website"] || "",
+      phone: tags.phone || tags["contact:phone"] || "",
+      category,
+      latitude: lat ?? null,
+      longitude: lon ?? null,
+      source: "OpenStreetMap"
     });
 
-    if (response.ok) {
-      data = await response.json();
-      break;
-    }
-
-    lastError = "Server returned HTTP " + response.status;
-
-  } catch (error) {
-    lastError = error.message;
+    if (results.length >= limit) break;
   }
-}
-
-if (!data) {
-  throw new Error(
-    "All free business search servers are temporarily unavailable. " +
-    lastError
-  );
-}
-
-  const keyword = industry.toLowerCase();
-
-  const businesses = data.elements
-    .map(item => {
-      const tags = item.tags || {};
-
-      return {
-        name: tags.name || "Unknown business",
-        address: [
-          tags["addr:housenumber"],
-          tags["addr:street"],
-          tags["addr:city"]
-        ].filter(Boolean).join(" "),
-        website: tags.website || tags["contact:website"] || "",
-        phone: tags.phone || tags["contact:phone"] || "",
-        category:
-          tags.shop ||
-          tags.office ||
-          tags.craft ||
-          tags.amenity ||
-          tags.tourism ||
-          "Business",
-        latitude: item.lat || item.center?.lat || null,
-        longitude: item.lon || item.center?.lon || null,
-        source: "OpenStreetMap"
-      };
-    })
-    .filter(item => {
-      const text = (
-        item.name + " " + item.category
-      ).toLowerCase();
-
-      return (
-        keyword.includes("business") ||
-        keyword.includes("company") ||
-        text.includes(keyword) ||
-        item.category.toLowerCase().includes(keyword)
-      );
-    })
-    .slice(0, limit);
 
   return {
-    location: place.display_name,
+    location: place.display_name || location,
     industry,
-    total: businesses.length,
-    businesses
+    total: results.length,
+    businesses: results,
+    notice: "Business listings may be incomplete or outdated. Verify details before contacting."
   };
 }
 
-async function askGemini(message, apiKey) {
-  const models = [
-    "gemini-3.8-flash",
-    "gemini-3.5-flash-lite"
-  ];
+// OPENAI SALES ASSISTANT
+async function askOpenAI(message, apiKey) {
 
-  let lastError = "AI request failed.";
+  const response = await fetchWithTimeout(
+    "https://api.openai.com/v1/responses",
+    {
+      method: "POST",
 
-  for (const model of models) {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: message }]
-          }]
-        })
-      }
+      headers: {
+        "Authorization": "Bearer " + apiKey,
+        "Content-Type": "application/json"
+      },
+
+      body: JSON.stringify({
+        model: "gpt-4.1-mini",
+
+        instructions: `
+You are SalesPilot AI, an intelligent professional sales assistant.
+
+Your responsibilities include:
+
+1. Writing personalised sales emails.
+2. Analysing potential business customers.
+3. Creating effective sales strategies.
+4. Generating professional follow-up messages.
+5. Helping users qualify potential customers.
+6. Identifying business development opportunities.
+7. Improving sales conversion strategies.
+
+Your personality:
+- Professional.
+- Intelligent.
+- Confident.
+- Friendly.
+- Clear and practical.
+
+Never invent business information, website problems,
+phone numbers or customer details.
+
+When information is missing, explain that clearly.
+
+Always provide useful, actionable answers.
+        `,
+
+        input: message,
+
+        max_output_tokens: 900
+      })
+    },
+    45000
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data?.error?.message || "OpenAI request failed."
     );
-
-    const result = await response.json();
-
-    if (response.ok) {
-      const reply =
-        result.candidates?.[0]?.content?.parts
-          ?.map(part => part.text || "")
-          .join("\n");
-
-      if (reply) return { reply, model };
-      lastError = "AI returned an empty response.";
-    } else {
-      lastError = result.error?.message || "Gemini request failed.";
-
-      if (![429, 500, 502, 503, 504].includes(response.status)) {
-        break;
-      }
-    }
   }
 
-  throw new Error(lastError);
+  let reply = "";
+
+  for (const item of data.output || []) {
+
+    if (item.type === "message" && Array.isArray(item.content)) {
+
+      for (const part of item.content) {
+
+        if (part.type === "output_text") {
+          reply += part.text;
+        }
+
+      }
+
+    }
+
+  }
+
+  if (!reply && data.output_text) {
+    reply = data.output_text;
+  }
+
+  if (!reply) {
+    throw new Error("OpenAI returned an empty response.");
+  }
+
+  return {
+    reply,
+    model: data.model || "gpt-4.1-mini"
+  };
 }
 
+// MAIN WORKER
 export default {
+
   async fetch(request, env) {
+
     if (request.method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -201,67 +261,115 @@ export default {
     }
 
     if (request.method === "GET") {
+
       return json({
         message: "SalesPilot AI backend is running.",
-        features: ["AI Assistant", "Business Search"]
+        aiProvider: "OpenAI",
+        aiConfigured: Boolean(env.OPENAI_API_KEY),
+        features: [
+          "OpenAI Sales Assistant",
+          "Business Discovery",
+          "Lead Research"
+        ]
       });
+
     }
 
     if (request.method !== "POST") {
-      return json({ error: "Method not allowed." }, 405);
+      return json({
+        error: "Method not allowed."
+      }, 405);
     }
 
+    let body;
+
     try {
-      const body = await request.json();
+      body = await request.json();
+    } catch {
+      return json({
+        error: "Invalid JSON request."
+      }, 400);
+    }
 
-      // Real business search
-      if (body.action === "findBusinesses") {
-        const industry = String(body.industry || "").trim();
-        const location = String(body.location || "").trim();
-        const limit = Math.min(
-          Math.max(Number(body.limit) || 10, 1),
-          20
-        );
+    // BUSINESS SEARCH
+    if (body.action === "findBusinesses") {
 
-        if (!industry || !location) {
-          return json({
-            error: "Industry and location are required."
-          }, 400);
-        }
+      const industry = String(body.industry || "").trim();
+      const location = String(body.location || "").trim();
 
-        const results = await findBusinesses(
+      const limit = Math.max(
+        1,
+        Math.min(Number(body.limit) || 10, 50)
+      );
+
+      if (!industry || !location) {
+        return json({
+          error: "Industry and location are required."
+        }, 400);
+      }
+
+      try {
+
+        const result = await findBusinesses(
           industry,
           location,
           limit
         );
 
-        return json(results);
-      }
+        return json(result);
 
-      // Existing Gemini AI assistant
-      if (!env.GEMINI_API_KEY) {
+      } catch (error) {
+
         return json({
-          error: "Gemini API key is not configured."
-        }, 500);
+          error: error.message || "Business search failed."
+        }, 502);
+
       }
 
-      if (!body.message) {
-        return json({
-          error: "Message is required."
-        }, 400);
-      }
+    }
 
-      const result = await askGemini(
-        body.message,
-        env.GEMINI_API_KEY
+    // OPENAI CONFIGURATION
+    if (!env.OPENAI_API_KEY) {
+
+      return json({
+        error: "OpenAI API key is missing. Add OPENAI_API_KEY to Cloudflare Worker secrets."
+      }, 500);
+
+    }
+
+    const message = String(body.message || "").trim();
+
+    if (!message) {
+      return json({
+        error: "Message is required."
+      }, 400);
+    }
+
+    if (message.length > 12000) {
+      return json({
+        error: "Message is too long."
+      }, 413);
+    }
+
+    try {
+
+      const result = await askOpenAI(
+        message,
+        env.OPENAI_API_KEY
       );
 
       return json(result);
 
     } catch (error) {
+
       return json({
-        error: error.message || "Unexpected server error."
-      }, 500);
+        error: error.name === "AbortError"
+          ? "OpenAI took too long to respond. Please try again."
+          : error.message || "AI request failed."
+      }, 502);
+
     }
+
   }
+
 };
