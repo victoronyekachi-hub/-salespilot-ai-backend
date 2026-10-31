@@ -157,52 +157,29 @@ out center tags ${Math.min(limit * 8, 300)};
 }
 
 // OPENAI SALES ASSISTANT
-async function askOpenAI(message, apiKey) {
-
+async function askGroq(message, apiKey) {
   const response = await fetchWithTimeout(
-    "https://api.openai.com/v1/responses",
+    "https://api.groq.com/openai/v1/chat/completions",
     {
       method: "POST",
-
       headers: {
-        "Authorization": "Bearer " + apiKey,
+        "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
-
       body: JSON.stringify({
-        model: "gpt-4.1-mini",
-
-        instructions: `
-You are SalesPilot AI, an intelligent professional sales assistant.
-
-Your responsibilities include:
-
-1. Writing personalised sales emails.
-2. Analysing potential business customers.
-3. Creating effective sales strategies.
-4. Generating professional follow-up messages.
-5. Helping users qualify potential customers.
-6. Identifying business development opportunities.
-7. Improving sales conversion strategies.
-
-Your personality:
-- Professional.
-- Intelligent.
-- Confident.
-- Friendly.
-- Clear and practical.
-
-Never invent business information, website problems,
-phone numbers or customer details.
-
-When information is missing, explain that clearly.
-
-Always provide useful, actionable answers.
-        `,
-
-        input: message,
-
-        max_output_tokens: 900
+        model: "openai/gpt-oss-20b",
+        messages: [
+          {
+            role: "system",
+            content: "You are SalesPilot AI, a professional sales assistant. Help users find prospects, research businesses, write personalized outreach, and grow their sales. Be accurate, practical and concise. Never invent business information."
+          },
+          {
+            role: "user",
+            content: message
+          }
+        ],
+        max_completion_tokens: 900,
+        temperature: 0.7
       })
     },
     45000
@@ -212,40 +189,12 @@ Always provide useful, actionable answers.
 
   if (!response.ok) {
     throw new Error(
-      data?.error?.message || "OpenAI request failed."
+      data.error?.message || `Groq API error: ${response.status}`
     );
   }
 
-  let reply = "";
-
-  for (const item of data.output || []) {
-
-    if (item.type === "message" && Array.isArray(item.content)) {
-
-      for (const part of item.content) {
-
-        if (part.type === "output_text") {
-          reply += part.text;
-        }
-
-      }
-
-    }
-
-  }
-
-  if (!reply && data.output_text) {
-    reply = data.output_text;
-  }
-
-  if (!reply) {
-    throw new Error("OpenAI returned an empty response.");
-  }
-
-  return {
-    reply,
-    model: data.model || "gpt-4.1-mini"
-  };
+  return data.choices?.[0]?.message?.content ||
+    "I couldn't generate a response. Please try again.";
 }
 
 // MAIN WORKER
