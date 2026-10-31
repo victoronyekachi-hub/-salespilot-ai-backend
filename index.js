@@ -156,7 +156,7 @@ out center tags ${Math.min(limit * 8, 300)};
   };
 }
 
-// OPENAI SALES ASSISTANT
+// GROQ SALES ASSISTANT
 async function askGroq(message, apiKey) {
   const response = await fetchWithTimeout(
     "https://api.groq.com/openai/v1/chat/completions",
@@ -211,18 +211,18 @@ export default {
 
     if (request.method === "GET") {
 
-      return json({
-        message: "SalesPilot AI backend is running.",
-        aiProvider: "OpenAI",
-        aiConfigured: Boolean(env.OPENAI_API_KEY),
-        features: [
-          "OpenAI Sales Assistant",
-          "Business Discovery",
-          "Lead Research"
-        ]
-      });
+  return json({
+    message: "SalesPilot AI backend is running.",
+    aiProvider: "Groq",
+    aiConfigured: Boolean(env.GROQ_API_KEY),
+    features: [
+      "Groq AI Sales Assistant",
+      "Business Discovery",
+      "Lead Research"
+    ]
+  });
 
-    }
+}
 
     if (request.method !== "POST") {
       return json({
@@ -277,48 +277,41 @@ export default {
 
     }
 
-    // OPENAI CONFIGURATION
-    if (!env.OPENAI_API_KEY) {
+    // GROQ CONFIGURATION
+if (!env.GROQ_API_KEY) {
+  return json({
+    error: "Groq API key is missing. Add GROQ_API_KEY to Cloudflare Worker secrets."
+  }, 500);
+}
 
-      return json({
-        error: "OpenAI API key is missing. Add OPENAI_API_KEY to Cloudflare Worker secrets."
-      }, 500);
+const message = String(body.message || "").trim();
 
-    }
+if (!message) {
+  return json({
+    error: "Message is required."
+  }, 400);
+}
 
-    const message = String(body.message || "").trim();
+if (message.length > 12000) {
+  return json({
+    error: "Message is too long."
+  }, 413);
+}
 
-    if (!message) {
-      return json({
-        error: "Message is required."
-      }, 400);
-    }
+try {
+  const result = await askGroq(
+    message,
+    env.GROQ_API_KEY
+  );
 
-    if (message.length > 12000) {
-      return json({
-        error: "Message is too long."
-      }, 413);
-    }
+  return json({ reply: result });
 
-    try {
+} catch (error) {
+  return json({
+    error: error.message || "Groq AI request failed."
+  }, 502);
+}
 
-      const result = await askOpenAI(
-        message,
-        env.OPENAI_API_KEY
-      );
-
-      return json(result);
-
-    } catch (error) {
-
-      return json({
-        error: error.name === "AbortError"
-          ? "OpenAI took too long to respond. Please try again."
-          : error.message || "AI request failed."
-      }, 502);
-
-    }
-
-  }
+}
 
 };
